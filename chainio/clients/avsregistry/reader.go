@@ -15,9 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	gethcommon "github.com/ethereum/go-ethereum/common"
 
-	contractOperatorStateRetriever "github.com/Layr-Labs/eigensdk-go/contracts/bindings/OperatorStateRetriever"
+	indexregistry "github.com/Layr-Labs/eigensdk-go/contracts/bindings/IndexRegistry"
 	opstateretriever "github.com/Layr-Labs/eigensdk-go/contracts/bindings/OperatorStateRetriever"
 	regcoord "github.com/Layr-Labs/eigensdk-go/contracts/bindings/RegistryCoordinator"
 	stakeregistry "github.com/Layr-Labs/eigensdk-go/contracts/bindings/StakeRegistry"
@@ -66,26 +65,29 @@ type AvsRegistryReader interface {
 		nonSignerOperatorIds []types.OperatorId,
 	) (opstateretriever.OperatorStateRetrieverCheckSignaturesIndices, error)
 
-	GetOperatorId(opts *bind.CallOpts, operatorAddress gethcommon.Address) ([32]byte, error)
+	GetOperatorId(opts *bind.CallOpts, operatorAddress common.Address) ([32]byte, error)
 
-	GetOperatorFromId(opts *bind.CallOpts, operatorId types.OperatorId) (gethcommon.Address, error)
+	GetOperatorFromId(opts *bind.CallOpts, operatorId types.OperatorId) (common.Address, error)
 
-	IsOperatorRegistered(opts *bind.CallOpts, operatorAddress gethcommon.Address) (bool, error)
+	IsOperatorRegistered(opts *bind.CallOpts, operatorAddress common.Address) (bool, error)
 
 	QueryExistingRegisteredOperatorPubKeys(
 		ctx context.Context,
 		startBlock *big.Int,
 		stopBlock *big.Int,
 	) ([]types.OperatorAddr, []types.OperatorPubkeys, error)
+
+	GetOperatorIdList(opts *bind.CallOpts, quorum uint8, blockNumber uint32) ([]types.OperatorId, error)
 }
 
 type AvsRegistryChainReader struct {
 	logger                  logging.Logger
-	blsApkRegistryAddr      gethcommon.Address
-	registryCoordinatorAddr gethcommon.Address
+	blsApkRegistryAddr      common.Address
+	registryCoordinatorAddr common.Address
 	registryCoordinator     *regcoord.ContractRegistryCoordinator
 	operatorStateRetriever  *opstateretriever.ContractOperatorStateRetriever
 	stakeRegistry           *stakeregistry.ContractStakeRegistry
+	indexRegistry           *indexregistry.ContractIndexRegistry
 	ethClient               eth.Client
 }
 
@@ -93,11 +95,12 @@ type AvsRegistryChainReader struct {
 var _ AvsRegistryReader = (*AvsRegistryChainReader)(nil)
 
 func NewAvsRegistryChainReader(
-	registryCoordinatorAddr gethcommon.Address,
-	blsApkRegistryAddr gethcommon.Address,
+	registryCoordinatorAddr common.Address,
+	blsApkRegistryAddr common.Address,
 	registryCoordinator *regcoord.ContractRegistryCoordinator,
 	operatorStateRetriever *opstateretriever.ContractOperatorStateRetriever,
 	stakeRegistry *stakeregistry.ContractStakeRegistry,
+	indexRegistry *indexregistry.ContractIndexRegistry,
 	logger logging.Logger,
 	ethClient eth.Client,
 ) *AvsRegistryChainReader {
@@ -107,14 +110,15 @@ func NewAvsRegistryChainReader(
 		registryCoordinator:     registryCoordinator,
 		operatorStateRetriever:  operatorStateRetriever,
 		stakeRegistry:           stakeRegistry,
+		indexRegistry:           indexRegistry,
 		logger:                  logger,
 		ethClient:               ethClient,
 	}
 }
 
 func BuildAvsRegistryChainReader(
-	registryCoordinatorAddr gethcommon.Address,
-	operatorStateRetrieverAddr gethcommon.Address,
+	registryCoordinatorAddr common.Address,
+	operatorStateRetrieverAddr common.Address,
 	ethClient eth.Client,
 	logger logging.Logger,
 ) (*AvsRegistryChainReader, error) {
@@ -130,16 +134,24 @@ func BuildAvsRegistryChainReader(
 	if err != nil {
 		return nil, types.WrapError(errors.New("Failed to get stakeRegistryAddr"), err)
 	}
+	indexRegistryAddr, err := contractRegistryCoordinator.IndexRegistry(&bind.CallOpts{})
+	if err != nil {
+		return nil, types.WrapError(errors.New("Failed to get indexRegistryAddr"), err)
+	}
 	contractStakeRegistry, err := stakeregistry.NewContractStakeRegistry(stakeRegistryAddr, ethClient)
 	if err != nil {
 		return nil, types.WrapError(errors.New("Failed to create contractStakeRegistry"), err)
 	}
-	contractOperatorStateRetriever, err := contractOperatorStateRetriever.NewContractOperatorStateRetriever(
+	contractOperatorStateRetriever, err := opstateretriever.NewContractOperatorStateRetriever(
 		operatorStateRetrieverAddr,
 		ethClient,
 	)
 	if err != nil {
 		return nil, types.WrapError(errors.New("Failed to create contractOperatorStateRetriever"), err)
+	}
+	contractIndexRegistry, err := indexregistry.NewContractIndexRegistry(indexRegistryAddr, ethClient)
+	if err != nil {
+		return nil, types.WrapError(errors.New("Failed to create contractIndexRegistry"), err)
 	}
 	return NewAvsRegistryChainReader(
 		registryCoordinatorAddr,
@@ -147,6 +159,7 @@ func BuildAvsRegistryChainReader(
 		contractRegistryCoordinator,
 		contractOperatorStateRetriever,
 		contractStakeRegistry,
+		contractIndexRegistry,
 		logger,
 		ethClient,
 	), nil
@@ -315,7 +328,7 @@ func (r *AvsRegistryChainReader) GetCheckSignaturesIndices(
 
 func (r *AvsRegistryChainReader) GetOperatorId(
 	opts *bind.CallOpts,
-	operatorAddress gethcommon.Address,
+	operatorAddress common.Address,
 ) ([32]byte, error) {
 	operatorId, err := r.registryCoordinator.GetOperatorId(
 		opts,
@@ -330,20 +343,20 @@ func (r *AvsRegistryChainReader) GetOperatorId(
 func (r *AvsRegistryChainReader) GetOperatorFromId(
 	opts *bind.CallOpts,
 	operatorId types.OperatorId,
-) (gethcommon.Address, error) {
+) (common.Address, error) {
 	operatorAddress, err := r.registryCoordinator.GetOperatorFromId(
 		opts,
 		operatorId,
 	)
 	if err != nil {
-		return gethcommon.Address{}, types.WrapError(errors.New("Failed to get operator address"), err)
+		return common.Address{}, types.WrapError(errors.New("Failed to get operator address"), err)
 	}
 	return operatorAddress, nil
 }
 
 func (r *AvsRegistryChainReader) IsOperatorRegistered(
 	opts *bind.CallOpts,
-	operatorAddress gethcommon.Address,
+	operatorAddress common.Address,
 ) (bool, error) {
 	operatorStatus, err := r.registryCoordinator.GetOperatorStatus(opts, operatorAddress)
 	if err != nil {
@@ -369,10 +382,10 @@ func (r *AvsRegistryChainReader) QueryExistingRegisteredOperatorPubKeys(
 	query := ethereum.FilterQuery{
 		FromBlock: startBlock,
 		ToBlock:   stopBlock,
-		Addresses: []gethcommon.Address{
+		Addresses: []common.Address{
 			r.blsApkRegistryAddr,
 		},
-		Topics: [][]gethcommon.Hash{{blsApkRegistryAbi.Events["NewPubkeyRegistration"].ID}},
+		Topics: [][]common.Hash{{blsApkRegistryAbi.Events["NewPubkeyRegistration"].ID}},
 	}
 
 	logs, err := r.ethClient.FilterLogs(ctx, query)
@@ -387,7 +400,7 @@ func (r *AvsRegistryChainReader) QueryExistingRegisteredOperatorPubKeys(
 	for _, vLog := range logs {
 
 		// get the operator address
-		operatorAddr := gethcommon.HexToAddress(vLog.Topics[1].Hex())
+		operatorAddr := common.HexToAddress(vLog.Topics[1].Hex())
 		operatorAddresses = append(operatorAddresses, operatorAddr)
 
 		event, err := blsApkRegistryAbi.Unpack("NewPubkeyRegistration", vLog.Data)
@@ -421,4 +434,21 @@ func (r *AvsRegistryChainReader) QueryExistingRegisteredOperatorPubKeys(
 	}
 
 	return operatorAddresses, operatorPubkeys, nil
+}
+
+func (r *AvsRegistryChainReader) GetOperatorIdList(
+	opts *bind.CallOpts,
+	quorum uint8,
+	blockNumber uint32,
+) ([]types.OperatorId, error) {
+	ids, err := r.indexRegistry.GetOperatorListAtBlockNumber(opts, quorum, blockNumber)
+	if err != nil {
+		r.logger.Error("Cannot get operator list", "err", err)
+		return nil, err
+	}
+	operatorIds := make([]types.OperatorId, 0)
+	for  _, id := range ids {
+		operatorIds = append(operatorIds, id)
+	}
+	return operatorIds, nil
 }

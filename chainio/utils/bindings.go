@@ -15,6 +15,7 @@ import (
 	blsapkregistry "github.com/Layr-Labs/eigensdk-go/contracts/bindings/BLSApkRegistry"
 	delegationmanager "github.com/Layr-Labs/eigensdk-go/contracts/bindings/DelegationManager"
 	slasher "github.com/Layr-Labs/eigensdk-go/contracts/bindings/ISlasher"
+	indexregistry "github.com/Layr-Labs/eigensdk-go/contracts/bindings/IndexRegistry"
 	opstateretriever "github.com/Layr-Labs/eigensdk-go/contracts/bindings/OperatorStateRetriever"
 	regcoordinator "github.com/Layr-Labs/eigensdk-go/contracts/bindings/RegistryCoordinator"
 	servicemanager "github.com/Layr-Labs/eigensdk-go/contracts/bindings/ServiceManagerBase"
@@ -90,12 +91,14 @@ type AvsRegistryContractBindings struct {
 	StakeRegistryAddr          gethcommon.Address
 	BlsApkRegistryAddr         gethcommon.Address
 	OperatorStateRetrieverAddr gethcommon.Address
+	IndexRegistryAddr          gethcommon.Address
 	// contract bindings
 	ServiceManager         *servicemanager.ContractServiceManagerBase
 	RegistryCoordinator    *regcoordinator.ContractRegistryCoordinator
 	StakeRegistry          *stakeregistry.ContractStakeRegistry
 	BlsApkRegistry         *blsapkregistry.ContractBLSApkRegistry
 	OperatorStateRetriever *opstateretriever.ContractOperatorStateRetriever
+	IndexRegistry          *indexregistry.ContractIndexRegistry
 }
 
 func NewAVSRegistryContractBindings(
@@ -156,16 +159,29 @@ func NewAVSRegistryContractBindings(
 		return nil, types.WrapError(errors.New("Failed to fetch OperatorStateRetriever contract"), err)
 	}
 
+	indexRegistryAddr, err := contractBlsRegistryCoordinator.IndexRegistry(&bind.CallOpts{})
+	if err != nil {
+		logger.Error("Failed to fetch IndexRegistry address", "err", err)
+		return nil, err
+	}
+	indexRegistry, err := indexregistry.NewContractIndexRegistry(indexRegistryAddr, ethclient)
+	if err != nil {
+		logger.Error("Failed to fetch IndexRegistry contract", "err", err)
+		return nil, err
+	}
+
 	return &AvsRegistryContractBindings{
 		ServiceManagerAddr:         serviceManagerAddr,
 		RegistryCoordinatorAddr:    registryCoordinatorAddr,
 		StakeRegistryAddr:          stakeregistryAddr,
 		BlsApkRegistryAddr:         blsApkRegistryAddr,
 		OperatorStateRetrieverAddr: operatorStateRetrieverAddr,
+		IndexRegistryAddr:          indexRegistryAddr,
 		ServiceManager:             contractServiceManager,
 		RegistryCoordinator:        contractBlsRegistryCoordinator,
 		StakeRegistry:              contractStakeRegistry,
 		BlsApkRegistry:             contractBlsApkRegistry,
 		OperatorStateRetriever:     contractOperatorStateRetriever,
+		IndexRegistry:              indexRegistry,
 	}, nil
 }
