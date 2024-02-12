@@ -9,5 +9,5 @@ type SignedTaskResponseDigest struct {
 	TaskResponseDigest          TaskResponseDigest
 	BlsSignature                *bls.Signature
 	OperatorId                  bls.OperatorId
-	SignatureVerificationErrorC chan error
+	SignatureVerificationErrorC chan error `json:"-"`
 }

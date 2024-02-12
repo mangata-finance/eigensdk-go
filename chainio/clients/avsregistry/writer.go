@@ -67,7 +67,12 @@ type AvsRegistryWriter interface {
 	DeregisterOperator(
 		ctx context.Context,
 		quorumNumbers []byte,
-		pubkey regcoord.BN254G1Point,
+	) (*gethtypes.Receipt, error)
+
+	EjectOperator(
+		ctx context.Context,
+		operatorAddress gethcommon.Address,
+		quorumNumbers []byte,
 	) (*gethtypes.Receipt, error)
 }
 
@@ -308,7 +313,6 @@ func (w *AvsRegistryChainWriter) UpdateStakesOfOperatorSubsetForAllQuorums(
 func (w *AvsRegistryChainWriter) DeregisterOperator(
 	ctx context.Context,
 	quorumNumbers []byte,
-	pubkey regcoord.BN254G1Point,
 ) (*gethtypes.Receipt, error) {
 	w.logger.Info("deregistering operator with the AVS's registry coordinator")
 	noSendTxOpts, err := w.txMgr.GetNoSendTxOpts()
@@ -324,5 +328,27 @@ func (w *AvsRegistryChainWriter) DeregisterOperator(
 		return nil, errors.New("failed to send tx with err: " + err.Error())
 	}
 	w.logger.Info("succesfully deregistered operator with the AVS's registry coordinator", "tx hash", receipt.TxHash.String())
+	return receipt, nil
+}
+
+func (w *AvsRegistryChainWriter) EjectOperator(
+	ctx context.Context,
+	operatorAddress gethcommon.Address,
+	quorumNumbers []byte,
+) (*gethtypes.Receipt, error) {
+	w.logger.Info("ejecting operator with the AVS's registry coordinator")
+	noSendTxOpts, err := w.txMgr.GetNoSendTxOpts()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := w.registryCoordinator.EjectOperator(noSendTxOpts, operatorAddress, quorumNumbers)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := w.txMgr.Send(ctx, tx)
+	if err != nil {
+		return nil, errors.New("failed to send tx with err: " + err.Error())
+	}
+	w.logger.Info("ejected operator with the AVS's registry coordinator", "tx hash: %s", tx.Hash().String(), "operator", operatorAddress)
 	return receipt, nil
 }
