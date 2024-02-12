@@ -210,6 +210,7 @@ func (config *BuildAllConfig) buildAvsClients(
 		avsRegistryContractBindings.RegistryCoordinator,
 		avsRegistryContractBindings.OperatorStateRetriever,
 		avsRegistryContractBindings.StakeRegistry,
+		avsRegistryContractBindings.IndexRegistry,
 		logger,
 		ethHttpClient,
 	)
