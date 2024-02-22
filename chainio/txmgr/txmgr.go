@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/Layr-Labs/eigensdk-go/logging"
@@ -53,6 +54,7 @@ type SimpleTxManager struct {
 	log       logging.Logger
 	sender    common.Address
 	contracts map[common.Address]*bind.BoundContract
+	l         sync.RWMutex
 }
 
 var _ TxManager = (*SimpleTxManager)(nil)
@@ -71,6 +73,7 @@ func NewSimpleTxManager(
 		signerFn:  signerFn,
 		sender:    sender,
 		contracts: map[common.Address]*bind.BoundContract{},
+		l:         sync.RWMutex{},
 	}
 }
 
@@ -81,6 +84,10 @@ func NewSimpleTxManager(
 // and resign the transaction after adding the nonce and gas limit.
 // To check out the whole flow on how this works, check out the README.md in this folder
 func (m *SimpleTxManager) Send(ctx context.Context, tx *types.Transaction) (*types.Receipt, error) {
+
+	// allow only one trx in flight due to nonce mgmt
+	m.l.Lock()
+	defer m.l.Unlock()
 
 	// Estimate gas and nonce
 	// can't print tx hash in logs because the tx changes below when we complete and sign it
@@ -120,7 +127,7 @@ func (m *SimpleTxManager) Send(ctx context.Context, tx *types.Transaction) (*typ
 
 	tx, err = contract.RawTransact(opts, tx.Data())
 	if err != nil {
-		return nil, sdktypes.WrapError(fmt.Errorf("send: tx %v failed.", tx.Hash().String()), err)
+		return nil, sdktypes.WrapError(fmt.Errorf("send: tx failed"), err)
 	}
 
 	receipt := m.waitForTx(ctx, tx)
@@ -174,6 +181,11 @@ func (m *SimpleTxManager) estimateGasAndNonce(ctx context.Context, tx *types.Tra
 		return nil, err
 	}
 
+	nonce, err := m.backend.PendingNonceAt(ctx, m.sender)
+	if err != nil {
+		return nil, err
+	}
+
 	rawTx := &types.DynamicFeeTx{
 		ChainID:   tx.ChainId(),
 		To:        tx.To(),
@@ -181,8 +193,8 @@ func (m *SimpleTxManager) estimateGasAndNonce(ctx context.Context, tx *types.Tra
 		GasFeeCap: gasFeeCap,
 		Data:      tx.Data(),
 		Value:     tx.Value(),
-		Gas:       gasLimit,   // TODO(add buffer)
-		Nonce:     tx.Nonce(), // We are not doing any nonce management for now but we probably should later for more robustness
+		Gas:       gasLimit, // TODO(add buffer)
+		Nonce:     nonce,
 	}
 
 	return types.NewTx(rawTx), nil
