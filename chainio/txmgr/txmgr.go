@@ -174,13 +174,14 @@ func (m *SimpleTxManager) estimateGasAndNonce(ctx context.Context, tx *types.Tra
 	// see https://www.blocknative.com/blog/eip-1559-fees
 	gasFeeCap := new(big.Int).Add(header.BaseFee.Mul(header.BaseFee, big.NewInt(2)), gasTipCap)
 
+	from, err := m.wallet.SenderAddress(ctx)
+	if err != nil {
+		return nil, errors.Join(errors.New("send: failed to get sender address"), err)
+	}
+
 	gasLimit := tx.Gas()
 	// we only estimate if gasLimit is not already set
 	if gasLimit == 0 {
-		from, err := m.wallet.SenderAddress(ctx)
-		if err != nil {
-			return nil, errors.Join(errors.New("send: failed to get sender address"), err)
-		}
 		gasLimit, err = m.client.EstimateGas(ctx, ethereum.CallMsg{
 			From:      from,
 			To:        tx.To(),
@@ -194,6 +195,11 @@ func (m *SimpleTxManager) estimateGasAndNonce(ctx context.Context, tx *types.Tra
 		}
 	}
 
+	nonce, err := m.client.PendingNonceAt(ctx, from)
+	if err != nil {
+		return nil, err
+	}
+
 	rawTx := &types.DynamicFeeTx{
 		ChainID:   tx.ChainId(),
 		To:        tx.To(),
@@ -202,7 +208,7 @@ func (m *SimpleTxManager) estimateGasAndNonce(ctx context.Context, tx *types.Tra
 		Data:      tx.Data(),
 		Value:     tx.Value(),
 		Gas:       uint64(float64(gasLimit) * m.gasLimitMultiplier),
-		Nonce:     tx.Nonce(), // We are not doing any nonce management for now but we probably should later for more robustness
+		Nonce:     nonce,
 	}
 
 	return types.NewTx(rawTx), nil

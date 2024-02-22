@@ -1,10 +1,7 @@
 package clients
 
 import (
-	"context"
-	"crypto/ecdsa"
 	"errors"
-	"time"
 
 	"github.com/Layr-Labs/eigensdk-go/chainio/clients/avsregistry"
 	"github.com/Layr-Labs/eigensdk-go/chainio/clients/elcontracts"
@@ -49,7 +46,8 @@ type Clients struct {
 
 func BuildAll(
 	config BuildAllConfig,
-	ecdsaPrivateKey *ecdsa.PrivateKey,
+	address gethcommon.Address,
+	signer signerv2.SignerFn,
 	logger logging.Logger,
 ) (*Clients, error) {
 	config.validate(logger)
@@ -69,23 +67,11 @@ func BuildAll(
 		return nil, types.WrapError(errors.New("Failed to create Eth WS client"), err)
 	}
 
-	rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	chainid, err := ethHttpClient.ChainID(rpcCtx)
-	if err != nil {
-		logger.Fatal("Cannot get chain id", "err", err)
-	}
-	signerV2, addr, err := signerv2.SignerFromConfig(signerv2.Config{PrivateKey: ecdsaPrivateKey}, chainid)
-	if err != nil {
-		panic(err)
-	}
-
-	pkWallet, err := wallet.NewPrivateKeyWallet(ethHttpClient, signerV2, addr, logger)
+	pkWallet, err := wallet.NewPrivateKeyWallet(ethHttpClient, signer, address, logger)
 	if err != nil {
 		return nil, types.WrapError(errors.New("Failed to create transaction sender"), err)
 	}
-	txMgr := txmgr.NewSimpleTxManager(pkWallet, ethHttpClient, logger, addr)
-	// creating EL clients: Reader, Writer and Subscriber
+	txMgr := txmgr.NewSimpleTxManager(pkWallet, ethHttpClient, logger, address)
 	elChainReader, elChainWriter, err := config.buildElClients(
 		ethHttpClient,
 		txMgr,

@@ -77,7 +77,7 @@ type AvsRegistryReader interface {
 		stopBlock *big.Int,
 	) ([]types.OperatorAddr, []types.OperatorPubkeys, error)
 
-	GetOperatorIdList(opts *bind.CallOpts, quorum uint8, blockNumber uint32) ([]types.OperatorId, error)
+	GetOperatorIdList(opts *bind.CallOpts, quorum types.QuorumNum, blockNumber uint32) ([]types.OperatorId, error)
 }
 
 type AvsRegistryChainReader struct {
@@ -456,10 +456,10 @@ func (r *AvsRegistryChainReader) QueryExistingRegisteredOperatorPubKeys(
 
 func (r *AvsRegistryChainReader) GetOperatorIdList(
 	opts *bind.CallOpts,
-	quorum uint8,
+	quorum types.QuorumNum,
 	blockNumber uint32,
 ) ([]types.OperatorId, error) {
-	ids, err := r.indexRegistry.GetOperatorListAtBlockNumber(opts, quorum, blockNumber)
+	ids, err := r.indexRegistry.GetOperatorListAtBlockNumber(opts, quorum.UnderlyingType(), blockNumber)
 	if err != nil {
 		r.logger.Error("Cannot get operator list", "err", err)
 		return nil, err
