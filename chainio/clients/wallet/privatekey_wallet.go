@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/Layr-Labs/eigensdk-go/chainio/clients/eth"
 	"github.com/Layr-Labs/eigensdk-go/logging"
@@ -30,6 +31,8 @@ type privateKeyWallet struct {
 
 	// cache
 	contracts map[common.Address]*bind.BoundContract
+
+	l sync.RWMutex
 }
 
 func NewPrivateKeyWallet(ethClient eth.Client, signer signerv2.SignerFn, signerAddress common.Address, logger logging.Logger) (Wallet, error) {
@@ -39,10 +42,15 @@ func NewPrivateKeyWallet(ethClient eth.Client, signer signerv2.SignerFn, signerA
 		signerFn:  signer,
 		logger:    logger,
 		contracts: make(map[common.Address]*bind.BoundContract, 0),
+		l:         sync.RWMutex{},
 	}, nil
 }
 
 func (t *privateKeyWallet) SendTransaction(ctx context.Context, tx *types.Transaction) (TxID, error) {
+	// allow only one trx in flight due to nonce mgmt
+	t.l.Lock()
+	defer t.l.Unlock()
+
 	// Estimate gas and nonce
 	// can't print tx hash in logs because the tx changes below when we complete and sign it
 	// so the txHash is meaningless at this point
@@ -81,7 +89,7 @@ func (t *privateKeyWallet) SendTransaction(ctx context.Context, tx *types.Transa
 
 	sendingTx, err := contract.RawTransact(opts, tx.Data())
 	if err != nil {
-		return "", sdktypes.WrapError(fmt.Errorf("send: tx %v failed.", tx.Hash().String()), err)
+		return "", sdktypes.WrapError(fmt.Errorf("send: tx %v failed.", sendingTx.Hash().String()), err)
 	}
 
 	return sendingTx.Hash().Hex(), nil
@@ -127,6 +135,11 @@ func (t *privateKeyWallet) estimateGasAndNonce(ctx context.Context, tx *types.Tr
 		return nil, err
 	}
 
+	nonce, err := t.ethClient.PendingNonceAt(ctx, t.address)
+	if err != nil {
+		return nil, err
+	}
+
 	rawTx := &types.DynamicFeeTx{
 		ChainID:   tx.ChainId(),
 		To:        tx.To(),
@@ -135,7 +148,7 @@ func (t *privateKeyWallet) estimateGasAndNonce(ctx context.Context, tx *types.Tr
 		Data:      tx.Data(),
 		Value:     tx.Value(),
 		Gas:       gasLimit,   // TODO(add buffer)
-		Nonce:     tx.Nonce(), // We are not doing any nonce management for now but we probably should later for more robustness
+		Nonce:     nonce,
 	}
 
 	return types.NewTx(rawTx), nil
