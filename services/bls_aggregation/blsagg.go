@@ -9,11 +9,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Layr-Labs/eigensdk-go/chainio/clients/eth"
 	"github.com/Layr-Labs/eigensdk-go/crypto/bls"
 	"github.com/Layr-Labs/eigensdk-go/logging"
 	"github.com/Layr-Labs/eigensdk-go/services/avsregistry"
 	"github.com/Layr-Labs/eigensdk-go/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )
 
 var (
@@ -77,9 +79,9 @@ type BlsAggregationService interface {
 	InitializeNewTask(
 		taskIndex types.TaskIndex,
 		taskCreatedBlock uint32,
+		timeToExpiry uint32,
 		quorumNumbers types.QuorumNums,
 		quorumThresholdPercentages types.QuorumThresholdPercentages,
-		timeToExpiry time.Duration,
 	) error
 
 	// ProcessNewSignature processes a new signature over a taskResponseDigest for a particular taskIndex by a particular operator
@@ -127,17 +129,25 @@ type BlsAggregatorService struct {
 	taskChansMutex     sync.RWMutex
 	avsRegistryService avsregistry.AvsRegistryService
 	logger             logging.Logger
+
+	currentBlockC chan *ethtypes.Header
 }
 
 var _ BlsAggregationService = (*BlsAggregatorService)(nil)
 
-func NewBlsAggregatorService(avsRegistryService avsregistry.AvsRegistryService, logger logging.Logger) *BlsAggregatorService {
+func NewBlsAggregatorService(avsRegistryService avsregistry.AvsRegistryService, client eth.Client, logger logging.Logger) *BlsAggregatorService {
+	headerC := make(chan *ethtypes.Header)
+	if _, err := client.SubscribeNewHead(context.Background(), headerC); err != nil {
+		logger.Fatal("AggregatorService failed to subscribe new blocks", "err", err)
+	}
+
 	return &BlsAggregatorService{
 		aggregatedResponsesC: make(chan BlsAggregationServiceResponse),
 		signedTaskRespsCs:    make(map[types.TaskIndex]chan types.SignedTaskResponseDigest),
 		taskChansMutex:       sync.RWMutex{},
 		avsRegistryService:   avsRegistryService,
 		logger:               logger,
+		currentBlockC:        headerC,
 	}
 }
 
@@ -153,9 +163,9 @@ func (a *BlsAggregatorService) GetResponseChannel() <-chan BlsAggregationService
 func (a *BlsAggregatorService) InitializeNewTask(
 	taskIndex types.TaskIndex,
 	taskCreatedBlock uint32,
+	timeToExpiry uint32,
 	quorumNumbers types.QuorumNums,
 	quorumThresholdPercentages types.QuorumThresholdPercentages,
-	timeToExpiry time.Duration,
 ) error {
 	a.logger.Debug("AggregatorService initializing new task", "taskIndex", taskIndex, "taskCreatedBlock", taskCreatedBlock, "quorumNumbers", quorumNumbers, "quorumThresholdPercentages", quorumThresholdPercentages, "timeToExpiry", timeToExpiry)
 	if _, taskExists := a.signedTaskRespsCs[taskIndex]; taskExists {
@@ -165,7 +175,7 @@ func (a *BlsAggregatorService) InitializeNewTask(
 	a.taskChansMutex.Lock()
 	a.signedTaskRespsCs[taskIndex] = signedTaskRespsC
 	a.taskChansMutex.Unlock()
-	go a.singleTaskAggregatorGoroutineFunc(taskIndex, taskCreatedBlock, quorumNumbers, quorumThresholdPercentages, timeToExpiry, signedTaskRespsC)
+	go a.singleTaskAggregatorGoroutineFunc(taskIndex, taskCreatedBlock, timeToExpiry, quorumNumbers, quorumThresholdPercentages, signedTaskRespsC)
 	return nil
 }
 
@@ -205,14 +215,12 @@ func (a *BlsAggregatorService) ProcessNewSignature(
 func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 	taskIndex types.TaskIndex,
 	taskCreatedBlock uint32,
+	timeToExpiry uint32,
 	quorumNumbers types.QuorumNums,
 	quorumThresholdPercentages []types.QuorumThresholdPercentage,
-	timeToExpiry time.Duration,
 	signedTaskRespsC <-chan types.SignedTaskResponseDigest,
 ) {
 	defer a.closeTaskGoroutine(taskIndex)
-
-	timeDebounce := time.Second * 5
 
 	quorumThresholdPercentagesMap := make(map[types.QuorumNum]types.QuorumThresholdPercentage)
 	for i, quorumNumber := range quorumNumbers {
@@ -238,11 +246,9 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 
 	aggregatedOperatorsDict := map[types.TaskResponseDigest]aggregatedOperators{}
 
-	// TODO(samlaf): instead of taking a TTE, we should take a block as input
-	// and monitor the chain and only close the task goroutine when that block is reached
-	taskExpiredTimer := time.NewTimer(timeToExpiry)
-	// set initialy after expired timer, reset on each new response received
-	taskResponseDebounceTimer := time.NewTimer(timeToExpiry + timeDebounce)
+	// set initialy roughly after expired timer, reset on each new response received
+	timeDebounce := time.Second * 5
+	taskResponseDebounceTimer := time.NewTimer(time.Second*12*time.Duration(timeToExpiry) + timeDebounce)
 
 	for {
 		select {
@@ -305,7 +311,10 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 			}
 
 		// we want to know which operators were active even thou the quorum was not met in time
-		case <-taskExpiredTimer.C:
+		case head := <-a.currentBlockC:
+			if uint32(head.Number.Uint64()) < taskCreatedBlock+timeToExpiry-1 {
+				continue
+			}
 			if len(aggregatedOperatorsDict) == 0 {
 				a.aggregatedResponsesC <- BlsAggregationServiceResponse{
 					Err:       TaskNotRespondedError,
