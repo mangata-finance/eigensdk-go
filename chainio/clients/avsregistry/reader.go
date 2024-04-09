@@ -75,6 +75,7 @@ type AvsRegistryReader interface {
 		ctx context.Context,
 		startBlock *big.Int,
 		stopBlock *big.Int,
+		filterLimit *big.Int,
 	) ([]types.OperatorAddr, []types.OperatorPubkeys, error)
 
 	GetOperatorIdList(opts *bind.CallOpts, quorum types.QuorumNum, blockNumber uint32) ([]types.OperatorId, error)
@@ -372,6 +373,7 @@ func (r *AvsRegistryChainReader) QueryExistingRegisteredOperatorPubKeys(
 	ctx context.Context,
 	startBlock *big.Int,
 	stopBlock *big.Int,
+	filterLimit *big.Int,
 ) ([]types.OperatorAddr, []types.OperatorPubkeys, error) {
 
 	blsApkRegistryAbi, err := abi.JSON(bytes.NewReader(eigenabi.BLSApkRegistryAbi))
@@ -394,8 +396,8 @@ func (r *AvsRegistryChainReader) QueryExistingRegisteredOperatorPubKeys(
 	operatorPubkeys := make([]types.OperatorPubkeys, 0)
 
 	// eth_getLogs is limited to a 10,000 range, so we need to iterate over the range
-	for i := startBlock; i.Cmp(stopBlock) <= 0; i.Add(i, big.NewInt(10_000)) {
-		toBlock := big.NewInt(0).Add(i, big.NewInt(10_000))
+	for i := startBlock; i.Cmp(stopBlock) <= 0; i.Add(i, filterLimit) {
+		toBlock := big.NewInt(0).Add(i, filterLimit)
 		if toBlock.Cmp(stopBlock) > 0 {
 			toBlock = stopBlock
 		}
@@ -465,7 +467,7 @@ func (r *AvsRegistryChainReader) GetOperatorIdList(
 		return nil, err
 	}
 	operatorIds := make([]types.OperatorId, 0)
-	for  _, id := range ids {
+	for _, id := range ids {
 		operatorIds = append(operatorIds, id)
 	}
 	return operatorIds, nil
