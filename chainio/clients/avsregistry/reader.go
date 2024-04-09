@@ -392,7 +392,7 @@ func (r *AvsRegistryChainReader) QueryExistingRegisteredOperatorPubKeys(
 	if err != nil {
 		return nil, nil, types.WrapError(errors.New("Cannot filter logs"), err)
 	}
-	r.logger.Debug("avsRegistryChainReader.QueryExistingRegisteredOperatorPubKeys", "transactionLogs", logs)
+	r.logger.Debug("avsRegistryChainReader.QueryExistingRegisteredOperatorPubKeys", "transactionLogs", logs, "start", startBlock, "end", stopBlock)
 
 	operatorAddresses := make([]types.OperatorAddr, 0)
 	operatorPubkeys := make([]types.OperatorPubkeys, 0)
@@ -447,7 +447,7 @@ func (r *AvsRegistryChainReader) GetOperatorIdList(
 		return nil, err
 	}
 	operatorIds := make([]types.OperatorId, 0)
-	for  _, id := range ids {
+	for _, id := range ids {
 		operatorIds = append(operatorIds, id)
 	}
 	return operatorIds, nil
