@@ -42,6 +42,7 @@ type Clients struct {
 	EthWsClient                eth.Client
 	Metrics                    *metrics.EigenMetrics // exposes main avs node spec metrics that need to be incremented by avs code and used to start the metrics server
 	PrometheusRegistry         *prometheus.Registry  // Used if avs teams need to register avs-specific metrics
+	TxMgr                      txmgr.TxManager
 }
 
 func BuildAll(
@@ -104,6 +105,7 @@ func BuildAll(
 		EthWsClient:                ethWsClient,
 		Metrics:                    eigenMetrics,
 		PrometheusRegistry:         promReg,
+		TxMgr:                      txMgr,
 	}, nil
 
 }
