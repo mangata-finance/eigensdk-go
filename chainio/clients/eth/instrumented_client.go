@@ -21,7 +21,7 @@ import (
 // see https://github.com/ethereum/go-ethereum/issues/28267
 type InstrumentedClient struct {
 	client            *ethclient.Client
-	rpcCallsCollector *rpccalls.Collector
+	rpcCallsCollector rpccalls.MetricsInterface
 	// we store both client and version because that's what the web3_clientVersion jsonrpc call returns
 	// https://ethereum.org/en/developers/docs/apis/json-rpc/#web3_clientversion
 	clientAndVersion string
@@ -29,7 +29,7 @@ type InstrumentedClient struct {
 
 var _ Client = (*InstrumentedClient)(nil)
 
-func NewInstrumentedClient(rpcAddress string, rpcCallsCollector *rpccalls.Collector) (*InstrumentedClient, error) {
+func NewInstrumentedClient(rpcAddress string, rpcCallsCollector rpccalls.MetricsInterface) (*InstrumentedClient, error) {
 	client, err := ethclient.Dial(rpcAddress)
 	if err != nil {
 		return nil, err

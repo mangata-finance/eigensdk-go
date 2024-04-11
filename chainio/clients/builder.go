@@ -45,6 +45,16 @@ type Clients struct {
 	TxMgr                      txmgr.TxManager
 }
 
+type EthLogger struct {
+	Logger logging.Logger
+}
+
+func (c EthLogger) AddRPCRequestTotal(method string, clientVersion string) {
+	c.Logger.Debug("EthLoggger", "method", method)
+}
+func (c EthLogger) ObserveRPCRequestDurationSeconds(duration float64, method string, clientVersion string) {
+}
+
 func BuildAll(
 	config BuildAllConfig,
 	address gethcommon.Address,
@@ -58,12 +68,12 @@ func BuildAll(
 	eigenMetrics := metrics.NewEigenMetrics(config.AvsName, config.PromMetricsIpPortAddress, promReg, logger)
 
 	// creating two types of Eth clients: HTTP and WS
-	ethHttpClient, err := eth.NewClient(config.EthHttpUrl)
+	ethHttpClient, err := eth.NewInstrumentedClient(config.EthHttpUrl, EthLogger{Logger: logger})
 	if err != nil {
 		return nil, types.WrapError(errors.New("Failed to create Eth Http client"), err)
 	}
 
-	ethWsClient, err := eth.NewClient(config.EthWsUrl)
+	ethWsClient, err := eth.NewInstrumentedClient(config.EthWsUrl, EthLogger{Logger: logger})
 	if err != nil {
 		return nil, types.WrapError(errors.New("Failed to create Eth WS client"), err)
 	}
