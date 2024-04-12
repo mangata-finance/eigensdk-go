@@ -2,7 +2,7 @@ package wallet
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"math/big"
 	"sync"
 
@@ -76,7 +76,7 @@ func (t *privateKeyWallet) SendTransaction(ctx context.Context, tx *types.Transa
 
 	sendingTx, err := contract.RawTransact(opts, tx.Data())
 	if err != nil {
-		return "", sdktypes.WrapError(fmt.Errorf("send: tx %v failed.", sendingTx.Hash().String()), err)
+		return "", sdktypes.WrapError(errors.New("send: tx failed."), err)
 	}
 
 	return sendingTx.Hash().Hex(), nil
