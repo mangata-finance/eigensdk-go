@@ -125,13 +125,19 @@ func (m *SimpleTxManager) waitForReceipt(ctx context.Context, txID wallet.TxID) 
 	// TODO: make this ticker adjustable
 	queryTicker := time.NewTicker(2 * time.Second)
 	defer queryTicker.Stop()
+	counter := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-queryTicker.C:
+			counter++
 			if receipt := m.queryReceipt(ctx, txID); receipt != nil {
 				return receipt, nil
+			}
+			// 20 mins, TODO: make adjustable
+			if counter > 600 {
+				return nil, errors.New("send: trx took too long, bailing out")
 			}
 		}
 	}
