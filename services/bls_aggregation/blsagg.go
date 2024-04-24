@@ -127,17 +127,19 @@ type BlsAggregatorService struct {
 	taskChansMutex     sync.RWMutex
 	avsRegistryService avsregistry.AvsRegistryService
 	logger             logging.Logger
+	debounceRpc        int
 }
 
 var _ BlsAggregationService = (*BlsAggregatorService)(nil)
 
-func NewBlsAggregatorService(avsRegistryService avsregistry.AvsRegistryService, logger logging.Logger) *BlsAggregatorService {
+func NewBlsAggregatorService(avsRegistryService avsregistry.AvsRegistryService, debounceRpc int, logger logging.Logger) *BlsAggregatorService {
 	return &BlsAggregatorService{
 		aggregatedResponsesC: make(chan BlsAggregationServiceResponse),
 		signedTaskRespsCs:    make(map[types.TaskIndex]chan types.SignedTaskResponseDigest),
 		taskChansMutex:       sync.RWMutex{},
 		avsRegistryService:   avsRegistryService,
-		logger:               logger,
+		debounceRpc: debounceRpc,
+		logger: logger,
 	}
 }
 
@@ -212,7 +214,7 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 ) {
 	defer a.closeTaskGoroutine(taskIndex)
 
-	timeDebounce := time.Second * 5
+	timeDebounce := time.Second * time.Duration(a.debounceRpc)
 
 	quorumThresholdPercentagesMap := make(map[types.QuorumNum]types.QuorumThresholdPercentage)
 	for i, quorumNumber := range quorumNumbers {
