@@ -51,6 +51,10 @@ type BlsAggregationServiceResponse struct {
 	QuorumApkIndices             []uint32
 	TotalStakeIndices            []uint32
 	NonSignerStakeIndices        [][]uint32
+	OldSignersApkG2             *bls.G2Point
+	OldSignersAggSigG1          *bls.Signature
+	NonSignerPubkeysIndicesforOperatorIdsRemovedForOldState   []uint32
+	NonSignerPubkeysAddedForOldState   []*bls.G1Point
 }
 
 // aggregatedOperators is meant to be used as a value in a map
@@ -64,6 +68,9 @@ type aggregatedOperators struct {
 	signersTotalStakePerQuorum map[types.QuorumNum]*big.Int
 	// set of OperatorId of operators who signed on this header
 	signersOperatorIdsSet map[types.OperatorId]bool
+	oldSignersApkG2 *bls.G2Point
+	oldSignersAggSigG1 *bls.Signature
+	oldSignersOperatorIdsSet map[types.OperatorId]bool
 }
 
 // BlsAggregationService is the interface provided to avs aggregator code for doing bls aggregation
@@ -78,6 +85,8 @@ type BlsAggregationService interface {
 		taskIndex types.TaskIndex,
 		taskCreatedBlock uint32,
 		quorumNumbers types.QuorumNums,
+		lastCompletedTaskCreatedBlock uint32,
+		lastCompletedTaskQuorumNumbers types.QuorumNums,
 		quorumThresholdPercentages types.QuorumThresholdPercentages,
 		timeToExpiry time.Duration,
 	) error
@@ -156,6 +165,8 @@ func (a *BlsAggregatorService) InitializeNewTask(
 	taskIndex types.TaskIndex,
 	taskCreatedBlock uint32,
 	quorumNumbers types.QuorumNums,
+	lastCompletedTaskCreatedBlock uint32,
+	lastCompletedTaskQuorumNumbers types.QuorumNums,
 	quorumThresholdPercentages types.QuorumThresholdPercentages,
 	timeToExpiry time.Duration,
 ) error {
@@ -167,7 +178,7 @@ func (a *BlsAggregatorService) InitializeNewTask(
 	a.taskChansMutex.Lock()
 	a.signedTaskRespsCs[taskIndex] = signedTaskRespsC
 	a.taskChansMutex.Unlock()
-	go a.singleTaskAggregatorGoroutineFunc(taskIndex, taskCreatedBlock, quorumNumbers, quorumThresholdPercentages, timeToExpiry, signedTaskRespsC)
+	go a.singleTaskAggregatorGoroutineFunc(taskIndex, taskCreatedBlock, quorumNumbers, lastCompletedTaskCreatedBlock, lastCompletedTaskQuorumNumbers, quorumThresholdPercentages, timeToExpiry, signedTaskRespsC)
 	return nil
 }
 
@@ -208,6 +219,8 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 	taskIndex types.TaskIndex,
 	taskCreatedBlock uint32,
 	quorumNumbers types.QuorumNums,
+	lastCompletedTaskCreatedBlock uint32,
+	lastCompletedTaskQuorumNumbers types.QuorumNums,
 	quorumThresholdPercentages []types.QuorumThresholdPercentage,
 	timeToExpiry time.Duration,
 	signedTaskRespsC <-chan types.SignedTaskResponseDigest,
@@ -225,6 +238,28 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 		// TODO: how should we handle such an error?
 		a.logger.Fatal("AggregatorService failed to get operators state from avs registry", "err", err, "blockNumber", taskCreatedBlock)
 	}
+	oldOperatorsAvsStateDict, err := a.avsRegistryService.GetOperatorsAvsStateAtBlock(context.Background(), lastCompletedTaskQuorumNumbers, lastCompletedTaskCreatedBlock)
+	if err != nil {
+		// TODO: how should we handle such an error?
+		a.logger.Fatal("Aggregator failed to get operators state from avs registry", "err", err)
+	}
+
+	// var operators_added map[types.OperatorId]bool
+	// var operators_removed map[types.OperatorId]bool
+
+	// for k, _ := range operatorsAvsStateDict{
+	// 	_, ok := oldOperatorsAvsStateDict[k] 
+	// 	if !ok{
+	// 		operators_added[k] = true
+	// 	}
+	// }
+	// for k, _ := range oldOperatorsAvsStateDict{
+	// 	_, ok := operatorsAvsStateDict[k] 
+	// 	if !ok{
+	// 		operators_removed[k] = true
+	// 	}
+	// }
+
 	quorumsAvsStakeDict, err := a.avsRegistryService.GetQuorumsAvsStateAtBlock(context.Background(), quorumNumbers, taskCreatedBlock)
 	if err != nil {
 		a.logger.Fatal("Aggregator failed to get quorums state from avs registry", "err", err)
@@ -256,7 +291,7 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 			taskResponseDebounceTimer.Stop()
 			taskResponseDebounceTimer.Reset(timeDebounce)
 
-			err := a.verifySignature(taskIndex, signedTaskResponseDigest, operatorsAvsStateDict)
+			err := a.verifySignature(taskIndex, signedTaskResponseDigest, operatorsAvsStateDict, oldOperatorsAvsStateDict)
 			signedTaskResponseDigest.SignatureVerificationErrorC <- err
 			if err != nil {
 				continue
@@ -265,15 +300,24 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 			// after verifying signature we aggregate its sig and pubkey, and update the signed stake amount
 			digestAggregatedOperators, ok := aggregatedOperatorsDict[signedTaskResponseDigest.TaskResponseDigest]
 			if !ok {
-				// first operator to sign on this digest
 				digestAggregatedOperators = aggregatedOperators{
-					// we've already verified that the operator is part of the task's quorum, so we don't need checks here
-					signersApkG2:               bls.NewZeroG2Point().Add(operatorsAvsStateDict[signedTaskResponseDigest.OperatorId].Pubkeys.G2Pubkey),
-					signersAggSigG1:            signedTaskResponseDigest.BlsSignature,
-					signersOperatorIdsSet:      map[types.OperatorId]bool{signedTaskResponseDigest.OperatorId: true},
-					signersTotalStakePerQuorum: operatorsAvsStateDict[signedTaskResponseDigest.OperatorId].StakePerQuorum,
+					signersApkG2:               bls.NewZeroG2Point(),
+					signersAggSigG1:            bls.NewZeroSignature(),
+					signersOperatorIdsSet:      map[types.OperatorId]bool{},
+					signersTotalStakePerQuorum: map[types.QuorumNum]*big.Int{},
+					oldSignersApkG2:            bls.NewZeroG2Point(),
+					oldSignersAggSigG1:         bls.NewZeroSignature(),
+					oldSignersOperatorIdsSet:   map[types.OperatorId]bool{},
 				}
-			} else {
+			}
+			// Has to be in one of the two below
+			if _, ok := oldOperatorsAvsStateDict[signedTaskResponseDigest.OperatorId]; ok {
+				digestAggregatedOperators.oldSignersAggSigG1.Add(signedTaskResponseDigest.BlsSignature)
+				digestAggregatedOperators.oldSignersApkG2.Add(oldOperatorsAvsStateDict[signedTaskResponseDigest.OperatorId].Pubkeys.G2Pubkey)
+				digestAggregatedOperators.oldSignersOperatorIdsSet[signedTaskResponseDigest.OperatorId] = true
+			}
+
+			if _, ok := operatorsAvsStateDict[signedTaskResponseDigest.OperatorId]; ok {
 				digestAggregatedOperators.signersAggSigG1.Add(signedTaskResponseDigest.BlsSignature)
 				digestAggregatedOperators.signersApkG2.Add(operatorsAvsStateDict[signedTaskResponseDigest.OperatorId].Pubkeys.G2Pubkey)
 				digestAggregatedOperators.signersOperatorIdsSet[signedTaskResponseDigest.OperatorId] = true
@@ -286,6 +330,7 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 					digestAggregatedOperators.signersTotalStakePerQuorum[quorumNum].Add(digestAggregatedOperators.signersTotalStakePerQuorum[quorumNum], stake)
 				}
 			}
+
 			// update the aggregatedOperatorsDict. Note that we need to assign the whole struct value at once,
 			// because of https://github.com/golang/go/issues/3117
 			aggregatedOperatorsDict[signedTaskResponseDigest.TaskResponseDigest] = digestAggregatedOperators
@@ -300,6 +345,7 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 				quorumThresholdPercentagesMap,
 				quorumApksG1,
 				operatorsAvsStateDict,
+				oldOperatorsAvsStateDict,
 				aggregatedOperatorsDict,
 			) {
 				a.logger.Debug("Task goroutine finished for task response digest", "taskIndex", taskIndex)
@@ -331,7 +377,7 @@ func (a *BlsAggregatorService) singleTaskAggregatorGoroutineFunc(
 					max = sum
 				}
 			}
-			blsAggregationServiceResponse, err := a.createResponse(taskIndex, taskCreatedBlock, quorumNumbers, signedTaskResponseDigest, operatorsAvsStateDict, digestAggregatedOperators, quorumApksG1)
+			blsAggregationServiceResponse, err := a.createResponse(taskIndex, taskCreatedBlock, quorumNumbers, signedTaskResponseDigest, operatorsAvsStateDict, oldOperatorsAvsStateDict, digestAggregatedOperators, quorumApksG1)
 			if err != nil {
 				a.aggregatedResponsesC <- BlsAggregationServiceResponse{
 					Err: err,
@@ -353,11 +399,12 @@ func (a *BlsAggregatorService) finishTask(
 	quorumThresholdPercentagesMap map[types.QuorumNum]types.QuorumThresholdPercentage,
 	quorumApksG1 []*bls.G1Point,
 	operatorsAvsStateDict map[types.OperatorId]types.OperatorAvsState,
+	oldOperatorsAvsStateDict map[types.OperatorId]types.OperatorAvsState,
 	aggregatedOperatorsDict map[types.TaskResponseDigest]aggregatedOperators,
 ) bool {
 	for digest, aggregatedOperators := range aggregatedOperatorsDict {
 		if checkIfStakeThresholdsMet(a.logger, aggregatedOperators.signersTotalStakePerQuorum, totalStakePerQuorum, quorumThresholdPercentagesMap) {
-			blsAggregationServiceResponse, err := a.createResponse(taskIndex, taskCreatedBlock, quorumNumbers, digest, operatorsAvsStateDict, aggregatedOperators, quorumApksG1)
+			blsAggregationServiceResponse, err := a.createResponse(taskIndex, taskCreatedBlock, quorumNumbers, digest, operatorsAvsStateDict, oldOperatorsAvsStateDict, aggregatedOperators, quorumApksG1)
 			if err != nil {
 				a.aggregatedResponsesC <- BlsAggregationServiceResponse{
 					Err: err,
@@ -392,9 +439,11 @@ func (a *BlsAggregatorService) verifySignature(
 	taskIndex types.TaskIndex,
 	signedTaskResponseDigest types.SignedTaskResponseDigest,
 	operatorsAvsStateDict map[types.OperatorId]types.OperatorAvsState,
+	oldOperatorsAvsStateDict map[types.OperatorId]types.OperatorAvsState,
 ) error {
 	_, ok := operatorsAvsStateDict[signedTaskResponseDigest.OperatorId]
-	if !ok {
+	_, ok2 := oldOperatorsAvsStateDict[signedTaskResponseDigest.OperatorId]
+	if !ok && !ok2 {
 		a.logger.Warnf("Operator %#v not found. Skipping message.", signedTaskResponseDigest.OperatorId)
 		return OperatorNotPartOfTaskQuorumErrorFn(signedTaskResponseDigest.OperatorId, taskIndex)
 	}
@@ -425,11 +474,15 @@ func (a *BlsAggregatorService) createResponse(
 	quorumNumbers []types.QuorumNum,
 	signedTaskResponseDigest types.TaskResponseDigest,
 	operatorsAvsStateDict map[types.OperatorId]types.OperatorAvsState,
+	oldOperatorsAvsStateDict map[types.OperatorId]types.OperatorAvsState,
 	digestAggregatedOperators aggregatedOperators,
 	quorumApksG1 []*bls.G1Point,
 ) (*BlsAggregationServiceResponse, error) {
 	nonSignersOperatorIds := []types.OperatorId{}
 	nonSignersG1Pubkeys := []*bls.G1Point{}
+	nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState := []uint32{}
+	nonSignerPubkeysAddedForOldState := []*bls.G1Point{}
+	
 	ks := []types.OperatorId{}
 	for operatorId := range operatorsAvsStateDict {
 		ks = append(ks, operatorId)
@@ -446,6 +499,30 @@ func (a *BlsAggregatorService) createResponse(
 			nonSignersG1Pubkeys = append(nonSignersG1Pubkeys, operator.Pubkeys.G1Pubkey)
 		}
 	}
+
+	for i, operatorId := range nonSignersOperatorIds{
+		if operatorSigned, ok := digestAggregatedOperators.oldSignersOperatorIdsSet[operatorId]; !ok || !operatorSigned {
+			nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState = append(nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState, uint32(i))
+		}
+	}
+
+
+	opList := []types.OperatorId{}
+	for operatorId, _ := range digestAggregatedOperators.oldSignersOperatorIdsSet{
+		if operatorSigned, ok := digestAggregatedOperators.signersOperatorIdsSet[operatorId]; !ok || !operatorSigned {
+			opList.append(opList, operatorId)
+		}
+	}
+	sort.Slice(opList, func(i, j int) bool {
+		a := big.NewInt(0).SetBytes(opList[i][:])
+		b := big.NewInt(0).SetBytes(opList[j][:])
+		return a.Cmp(b) < 0
+	})
+	for _, operatorId := range opList {
+		nonSignerPubkeysAddedForOldState = append(nonSignerPubkeysAddedForOldState, oldOperatorsAvsStateDict[operatorId].Pubkeys.G1Pubkey)
+	}
+
+
 	indices, err := a.avsRegistryService.GetCheckSignaturesIndices(&bind.CallOpts{}, taskCreatedBlock, quorumNumbers, nonSignersOperatorIds)
 	if err != nil {
 		a.logger.Error("Failed to get check signatures indices", "err", err)
@@ -463,6 +540,10 @@ func (a *BlsAggregatorService) createResponse(
 		QuorumApkIndices:             indices.QuorumApkIndices,
 		TotalStakeIndices:            indices.TotalStakeIndices,
 		NonSignerStakeIndices:        indices.NonSignerStakeIndices,
+		OldSignersApkG2:              digestAggregatedOperators.oldSignersApkG2,
+		OldSignersAggSigG1:           digestAggregatedOperators.oldSignersAggSigG1,
+		NonSignerPubkeysIndicesforOperatorIdsRemovedForOldState:   nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState,
+		NonSignerPubkeysAddedForOldState:   nonSignerPubkeysAddedForOldState,
 	}, nil
 }
 
