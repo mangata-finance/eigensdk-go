@@ -480,8 +480,7 @@ func (a *BlsAggregatorService) createResponse(
 ) (*BlsAggregationServiceResponse, error) {
 	nonSignersOperatorIds := []types.OperatorId{}
 	nonSignersG1Pubkeys := []*bls.G1Point{}
-	nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState := []uint32{}
-	nonSignerPubkeysAddedForOldState := []*bls.G1Point{}
+	nonSignerG1PubkeysForOldState := []*bls.G1Point{}
 	
 	ks := []types.OperatorId{}
 	for operatorId := range operatorsAvsStateDict {
@@ -500,18 +499,9 @@ func (a *BlsAggregatorService) createResponse(
 		}
 	}
 
-	for i, operatorId := range nonSignersOperatorIds{
-		if operatorSigned, ok := digestAggregatedOperators.oldSignersOperatorIdsSet[operatorId]; !ok || !operatorSigned {
-			nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState = append(nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState, uint32(i))
-		}
-	}
-
-
 	opList := []types.OperatorId{}
-	for operatorId, _ := range digestAggregatedOperators.oldSignersOperatorIdsSet{
-		if operatorSigned, ok := digestAggregatedOperators.signersOperatorIdsSet[operatorId]; !ok || !operatorSigned {
-			opList.append(opList, operatorId)
-		}
+	for operatorId := range oldOperatorsAvsStateDict{
+		opList = append(opList, operatorId)
 	}
 	sort.Slice(opList, func(i, j int) bool {
 		a := big.NewInt(0).SetBytes(opList[i][:])
@@ -519,7 +509,10 @@ func (a *BlsAggregatorService) createResponse(
 		return a.Cmp(b) < 0
 	})
 	for _, operatorId := range opList {
-		nonSignerPubkeysAddedForOldState = append(nonSignerPubkeysAddedForOldState, oldOperatorsAvsStateDict[operatorId].Pubkeys.G1Pubkey)
+		operator := oldOperatorsAvsStateDict[operatorId]
+		if _, operatorSigned := digestAggregatedOperators.oldSignersOperatorIdsSet[operatorId]; !operatorSigned {
+			nonSignerG1PubkeysForOldState = append(nonSignerG1PubkeysForOldState, operator.Pubkeys.G1Pubkey)
+		}
 	}
 
 
