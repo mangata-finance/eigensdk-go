@@ -53,8 +53,7 @@ type BlsAggregationServiceResponse struct {
 	NonSignerStakeIndices        [][]uint32
 	OldSignersApkG2             *bls.G2Point
 	OldSignersAggSigG1          *bls.Signature
-	NonSignerPubkeysIndicesforOperatorIdsRemovedForOldState   []uint32
-	NonSignerPubkeysAddedForOldState   []*bls.G1Point
+	NonSignerG1PubkeysForOldState  []*bls.G1Point
 }
 
 // aggregatedOperators is meant to be used as a value in a map
@@ -535,8 +534,7 @@ func (a *BlsAggregatorService) createResponse(
 		NonSignerStakeIndices:        indices.NonSignerStakeIndices,
 		OldSignersApkG2:              digestAggregatedOperators.oldSignersApkG2,
 		OldSignersAggSigG1:           digestAggregatedOperators.oldSignersAggSigG1,
-		NonSignerPubkeysIndicesforOperatorIdsRemovedForOldState:   nonSignerPubkeysIndicesforOperatorIdsRemovedForOldState,
-		NonSignerPubkeysAddedForOldState:   nonSignerPubkeysAddedForOldState,
+		NonSignerG1PubkeysForOldState:   nonSignerG1PubkeysForOldState,
 	}, nil
 }
 
